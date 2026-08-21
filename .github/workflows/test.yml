@@ -17,6 +17,8 @@ env:
   NUGET_PACKAGES: ${{github.workspace}}/artifacts/pkg
   RestoreLockedMode: true
   XunitVersion: "2.4.2"
+  # The pinned 4.6.2-tagged image contains .NET Framework 4.7.2.
+  NETFX_IMAGE: mcr.microsoft.com/dotnet/framework/runtime:4.6.2@sha256:17f9a2898ce58deac21b9ad9d008b7a56a2fb932e01ccb41a80f298b340a48a9
 
   DUMPS_PATH: ${{github.workspace}}/artifacts/dumps/
   WORKSPACE: ${{github.workspace}}
@@ -42,6 +44,20 @@ jobs:
       LOG_FILE_NAME: testresults.${{ fromJSON(inputs.matrix).os.runner }}.${{ fromJSON(inputs.matrix).dotnet.id != '' && fromJSON(inputs.matrix).dotnet.id || fromJSON(inputs.matrix).dotnet.sdk }}.${{ fromJSON(inputs.matrix).arch }}
 
     steps:
+    - name: Start Docker
+      if: ${{ fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
+      timeout-minutes: 1
+      run: |
+        $service = Get-Service docker
+        if ($service.Status -ne 'Running') {
+            Start-Service docker
+            $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+        }
+        docker info | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Docker did not become ready.'
+        }
+
     - name: Install coreutils
       uses: tecolicom/actions-use-homebrew-tools@v1 # we use this action instead of just a brew install so that the downloaded package gets cached
       if: ${{ runner.os == 'macOS' }}
@@ -76,19 +92,19 @@ jobs:
         echo "MONO_GAC_PREFIX=$(brew --prefix mono)" >> "$GITHUB_ENV"
       
     - name: Install ProcDump
-      if: ${{ runner.os == 'Windows' }}
+      if: ${{ runner.os == 'Windows' && !fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
       run: choco install procdump -y
 
     - name: Checkout
       uses: actions/checkout@v6
-      if: ${{ fromJSON(inputs.matrix).dotnet.needsRestore || fromJSON(inputs.matrix).dotnet.isMono }}
+      if: ${{ fromJSON(inputs.matrix).dotnet.needsRestore || fromJSON(inputs.matrix).dotnet.isMono || fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
       with:
         lfs: true
         submodules: recursive
         
     # Note: All of the SDKs we install have to be for the target architecture. Otherwise, we get issues when the default != the target.
     - name: Install global SDK
-      if: ${{ ! fromJSON(inputs.matrix).dotnet.needsRestore }}
+      if: ${{ !fromJSON(inputs.matrix).dotnet.needsRestore && !fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
       uses: nike4613/install-dotnet@cc706db77ed67745a4a4cbae19b2869220e34d27
       with:
         architecture: ${{ fromJSON(inputs.matrix).arch }}
@@ -121,6 +137,24 @@ jobs:
       uses: actions/download-artifact@v7
       with:
         name: test-assets
+
+    - name: Prepare legacy .NET Framework tests
+      if: ${{ fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
+      run: |
+        New-Item -ItemType Directory -Path payload\xunit | Out-Null
+        Copy-Item .github\workflows\run-netfx-tests.ps1 payload
+        Copy-Item release_net472 payload\tests -Recurse
+
+        Invoke-WebRequest `
+          -Uri "https://api.nuget.org/v3-flatcontainer/xunit.runner.console/$env:XunitVersion/xunit.runner.console.$env:XunitVersion.nupkg" `
+          -OutFile xunit.zip
+        Expand-Archive xunit.zip -DestinationPath xunit-package
+        Copy-Item xunit-package\tools\net472\* payload\xunit -Recurse
+
+    - name: Pull legacy .NET Framework image
+      if: ${{ fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
+      timeout-minutes: 15
+      run: docker pull $env:NETFX_IMAGE
         
     - name: Install test target runtime
       if: ${{ fromJSON(inputs.matrix).dotnet.sdk != '' }}
@@ -139,6 +173,7 @@ jobs:
         dotnet run --project ./build/setup-mono/setup-mono.csproj -- $env:INPUT_JOB $env:GITHUB_OUTPUT $env:GITHUB_ENV ${{ runner.os }}
 
     - name: Print SDK info
+      if: ${{ !fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
       run: dotnet --info
       
     - name: Fix runtimeconfig.json probing paths
@@ -147,12 +182,17 @@ jobs:
         ConvertTo-Json @{runtimeOptions=@{additionalProbingPaths=@($env:NUGET_PACKAGES)}} > release_${{ fromJSON(inputs.matrix).dotnet.tfm }}/MonoMod.UnitTest.runtimeconfig.dev.json
 
     - name: Run tests
-      if: ${{ ! fromJSON(inputs.matrix).dotnet.isMono && ! fromJSON(inputs.matrix).dotnet.pgo }}
+      if: ${{ !fromJSON(inputs.matrix).dotnet.isMono && !fromJSON(inputs.matrix).dotnet.pgo && !fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
       run: |
         dotnet test `
           --blame-crash-dump-type full --blame-hang-timeout 5m --blame-hang-dump-type full `
           -f ${{ fromJSON(inputs.matrix).dotnet.tfm }} -a ${{ fromJSON(inputs.matrix).arch }} `
           -l:"trx;LogFileName=$($env:LOG_FILE_NAME).trx" release_${{ fromJSON(inputs.matrix).dotnet.tfm }}/MonoMod.UnitTest.dll
+
+    - name: Run tests (legacy .NET Framework)
+      if: ${{ fromJSON(inputs.matrix).dotnet.isLegacyFramework }}
+      timeout-minutes: 5
+      run: ./.github/workflows/run-netfx-container-tests.ps1 -Image $env:NETFX_IMAGE -Payload payload -Results TestResults -Architecture ${{ fromJSON(inputs.matrix).arch }}
 
     - name: Run tests (PGO)
       if: ${{ fromJSON(inputs.matrix).dotnet.pgo }}
@@ -186,6 +226,9 @@ jobs:
         retention-days: 1
         path: |
           TestResults/*.trx
+          TestResults/*.xml
+          TestResults/*.log
+          TestResults/*.txt
           *.xml
           diaglog.*
 

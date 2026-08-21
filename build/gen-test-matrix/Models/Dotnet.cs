@@ -11,6 +11,7 @@ internal sealed record Dotnet : Enableable
     public bool NeedsRestore { get; init; }
 
     public bool IsFramework { get; init; }
+    public bool IsLegacyFramework { get; init; }
     public bool IsMono { get; init; }
     [JsonPropertyName("systemMono")]
     public bool IsSystemMono { get; init; }
@@ -32,6 +33,15 @@ internal sealed record Dotnet : Enableable
     public ImmutableArray<string> RIDs { get; init; }
 
     public static readonly ImmutableArray<Dotnet> Versions = [
+        new()
+        {
+            Name = ".NET Framework 4.7.2",
+            Id = "fx472",
+            TFM = "net472",
+            IsFramework = true,
+            IsLegacyFramework = true,
+            RIDs = ["win-x86", "win-x64"]
+        },
         new()
         {
             Name = ".NET Framework 4.x",

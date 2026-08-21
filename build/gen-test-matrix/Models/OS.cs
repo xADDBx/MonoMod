@@ -13,6 +13,8 @@ internal sealed record OS : Enableable
     [JsonIgnore]
     public bool HasFramework { get; init; }
     [JsonIgnore]
+    public bool SupportsLegacyFrameworkContainer { get; init; }
+    [JsonIgnore]
     public bool HasSystemMono { get; init; }
 
     // NOTE: Most of these are actually semantically required, but we have to make them not for JSON serialization to be happy
@@ -34,6 +36,7 @@ internal sealed record OS : Enableable
             Name = "Windows",
             Runner = "windows-latest",
             HasFramework = true,
+            SupportsLegacyFrameworkContainer = true,
             RidName = "win",
             UnityDllName = "mono-2.0-bdwgc",
             DllSuffix = ".dll",

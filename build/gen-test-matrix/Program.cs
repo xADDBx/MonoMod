@@ -62,6 +62,7 @@ foreach (var os in OS.OperatingSystems)
 
             // skip frameworks if the OS doesn't support framework
             if (dotnet.IsFramework && !os.HasFramework) continue;
+            if (dotnet.IsLegacyFramework && !os.SupportsLegacyFrameworkContainer) continue;
 
             // skip runtime if it doesn't support the current RID
             if (!dotnet.RIDs.Contains(rid)) continue;

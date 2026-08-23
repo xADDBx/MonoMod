@@ -14,6 +14,8 @@ internal sealed record OS : Enableable
     public bool HasFramework { get; init; }
     [JsonIgnore]
     public bool HasSystemMono { get; init; }
+    [JsonIgnore]
+    public bool SupportsUnityTests { get; init; }
 
     // NOTE: Most of these are actually semantically required, but we have to make them not for JSON serialization to be happy
     [JsonIgnore]
@@ -34,6 +36,7 @@ internal sealed record OS : Enableable
             Name = "Windows",
             Runner = "windows-latest",
             HasFramework = true,
+            SupportsUnityTests = true,
             RidName = "win",
             UnityDllName = "mono-2.0-bdwgc",
             DllSuffix = ".dll",
@@ -64,6 +67,7 @@ internal sealed record OS : Enableable
             Runner = "ubuntu-latest",
             UseContainer = true,
             HasSystemMono = true,
+            SupportsUnityTests = true,
             RidName = "linux",
             UnityDllName = "monobdwgc-2.0", // TODO: is this correct?
             DllPrefix = "lib",

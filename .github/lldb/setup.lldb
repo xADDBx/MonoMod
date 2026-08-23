@@ -15,4 +15,3 @@ process handle -s true -p true -n true SIGXCPU SIGABRT SIGILL SIGBUS
 breakpoint set -b mono_handle_native_crash -K true -G true -C sdmp
 
 # --- SETUP DONE --- 
-run

@@ -46,5 +46,6 @@
   <Project Path="src/MonoMod.RuntimeDetour/MonoMod.RuntimeDetour.csproj" />
   <Project Path="src/MonoMod.SourceGen.Internal/MonoMod.SourceGen.Internal.csproj" />
   <Project Path="src/MonoMod.UnitTest/MonoMod.UnitTest.csproj" />
+  <Project Path="src/MonoMod.UnityTest/MonoMod.UnityTest.csproj" />
   <Project Path="src/MonoMod.Utils/MonoMod.Utils.csproj" />
 </Solution>

@@ -74,6 +74,10 @@ jobs:
     - name: Pack
       run: dotnet pack --no-restore -c Release -p:ContinuousIntegrationBuild=true -bl:pack.binlog -clp:NoSummary -noAutoRsp
 
+    - name: Prepare Unity test libraries
+      if: ${{ inputs.upload-tests }}
+      run: ./.github/workflows/prepare-unity-test-libraries.ps1
+
       # TODO: it might be worth trying to do a "smoketest" test run with the installed tfm to broadly make sure that all builds
       #       work. We may also want to do a hash check on the packages, though I have no idea how reliable that would be.
       
@@ -121,3 +125,12 @@ jobs:
         retention-days: 1
         path: |
           artifacts/bin/MonoMod.UnitTest/*/**/*
+
+    - name: Upload Unity test assets
+      uses: actions/upload-artifact@v6
+      if: ${{ inputs.upload-tests }}
+      with:
+        name: unity-test-assets
+        retention-days: 1
+        path: |
+          artifacts/bin/MonoMod.UnityTest/*/**/*

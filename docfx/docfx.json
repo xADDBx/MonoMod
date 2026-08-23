@@ -12,6 +12,7 @@
             "**/MonoMod.FrameworkTests.*",
             "**/MonoMod.SourceGen.*.*",
             "**/MonoMod.UnitTest.*",
+            "**/MonoMod.UnityTest.*",
             "**/MonoMod.Backports.Tasks.*",
             "**/MonoMod.Patcher.*",
             "**/MonoMod.ILHelpers.Patcher.*",

@@ -8,4 +8,5 @@ internal sealed record Job
     public required string Arch { get; init; }
     public string? Container { get; init; }
     public bool? UsePGO { get; init; }
+    public bool IsUnity { get; init; }
 }

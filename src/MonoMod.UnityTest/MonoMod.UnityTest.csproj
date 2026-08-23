@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net472</TargetFrameworks>
+    <RootNamespace>Doorstop</RootNamespace>
+    <SignAssembly>skip</SignAssembly>
+    <IsPackable>false</IsPackable>
+    <MMReferenceUtils>false</MMReferenceUtils>
+    <MMReferenceBackports>false</MMReferenceBackports>
+    <MMReferenceILHelpers>false</MMReferenceILHelpers>
+    <MMUseSourceGen>false</MMUseSourceGen>
+    <NoWarn>$(NoWarn);CA1031</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.runner.console" Version="2.4.2" GeneratePathProperty="true" PrivateAssets="all" />
+    <None Include="$(Pkgxunit_runner_console)/tools/net452/xunit.console.exe" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(Pkgxunit_runner_console)/tools/net452/xunit.runner.reporters.net452.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(Pkgxunit_runner_console)/tools/net452/xunit.runner.utility.net452.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

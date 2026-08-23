@@ -88,7 +88,7 @@ jobs:
         
     # Note: All of the SDKs we install have to be for the target architecture. Otherwise, we get issues when the default != the target.
     - name: Install global SDK
-      if: ${{ ! fromJSON(inputs.matrix).dotnet.needsRestore }}
+      if: ${{ ! fromJSON(inputs.matrix).dotnet.needsRestore && ! fromJSON(inputs.matrix).isUnity }}
       uses: nike4613/install-dotnet@cc706db77ed67745a4a4cbae19b2869220e34d27
       with:
         architecture: ${{ fromJSON(inputs.matrix).arch }}
@@ -121,6 +121,13 @@ jobs:
       uses: actions/download-artifact@v7
       with:
         name: test-assets
+
+    - name: Download Unity test assets
+      if: ${{ fromJSON(inputs.matrix).isUnity }}
+      uses: actions/download-artifact@v7
+      with:
+        name: unity-test-assets
+        path: unity-test-assets
         
     - name: Install test target runtime
       if: ${{ fromJSON(inputs.matrix).dotnet.sdk != '' }}
@@ -131,7 +138,7 @@ jobs:
         runtime: dotnet
 
     - name: Setup Mono
-      if: ${{ fromJSON(inputs.matrix).dotnet.isMono }}
+      if: ${{ fromJSON(inputs.matrix).dotnet.isMono && ! fromJSON(inputs.matrix).isUnity }}
       id: setup_mono
       env:
         INPUT_JOB: ${{ inputs.matrix }}
@@ -167,7 +174,7 @@ jobs:
           -l:"trx;LogFileName=$($env:LOG_FILE_NAME).trx" release_${{ fromJSON(inputs.matrix).dotnet.tfm }}/MonoMod.UnitTest.dll
           
     - name: Run tests (Mono)
-      if: ${{ fromJSON(inputs.matrix).dotnet.isMono }}
+      if: ${{ fromJSON(inputs.matrix).dotnet.isMono && ! fromJSON(inputs.matrix).isUnity }}
       env:
         TFM: ${{ fromJSON(inputs.matrix).dotnet.tfm }}
         RUNNER_TFM: ${{ steps.setup_mono.outputs.runner_tfm }}
@@ -175,6 +182,13 @@ jobs:
         MDH: ${{ steps.setup_mono.outputs.mdh }}
         MONO_DLL: ${{ steps.setup_mono.outputs.mono_dll }}
       run: ./.github/workflows/run-mono-tests.ps1
+
+    - name: Run tests (Unity Mono)
+      if: ${{ fromJSON(inputs.matrix).isUnity }}
+      timeout-minutes: 5
+      env:
+        UNITY_ARCH: ${{ fromJSON(inputs.matrix).arch }}
+      run: ./.github/workflows/run-unity-tests.ps1
 
     # TODO: Non-system Mono
 

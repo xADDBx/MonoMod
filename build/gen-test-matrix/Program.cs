@@ -142,7 +142,24 @@ foreach (var os in OS.OperatingSystems)
             }
         }
 
-        // TODO: Unity Mono
+        if (os.SupportsUnityTests && arch.UnityName is not null)
+        {
+            await jobs.AddJob(new()
+            {
+                Title = $"Unity Mono 2019.4.40f1 {arch.RidName} on {os.Name}",
+                OS = os,
+                Arch = arch.RidName,
+                Container = container,
+                Dotnet = new()
+                {
+                    Name = "Unity Mono 2019.4.40f1",
+                    Id = "unity2019.4.40f1",
+                    TFM = "net472",
+                    IsMono = true,
+                },
+                IsUnity = true,
+            });
+        }
     }
 }
 

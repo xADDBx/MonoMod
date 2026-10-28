@@ -84,8 +84,7 @@ namespace MonoMod.UnitTest
         [Fact]
         public void HookAfterTieringDelay()
         {
-            // the first hook calls everything hooking needs for the first time, which delays tiering;
-            // once the delay ends, .NET Core 3 resets Unbound's entry point to count its calls
+            // the first hook starts a tiering delay; once it ends, .NET Core 3 unbinds Unbound to count its calls
             using (new Hook(() => Unbound(), () => Replacement()))
             {
             }

@@ -311,7 +311,12 @@ namespace MonoMod.Core.Platforms
                 else
                 {
                     // the method has a declaring type, get it there
-                    if (method.IsConstructor)
+                    if (method.IsGenericMethod)
+                    {
+                        // GetMethod never returns generic method instantiations, only their definitions
+                        method = MethodBase.GetMethodFromHandle(method.MethodHandle, method.DeclaringType.TypeHandle)!;
+                    }
+                    else if (method.IsConstructor)
                     {
                         var got = method.DeclaringType.GetConstructor((BindingFlags)(-1), null, method.CallingConvention, paramTypes, null);
                         Helpers.Assert(got is not null, $"orig: {method}");

@@ -49,6 +49,33 @@ namespace MonoMod.UnitTest
             Assert.True(DidNothing);
         }
 
+        [Fact]
+        public void TestILHookOnGenericMethodReflectedThroughDerivedType()
+        {
+            using (var h = new ILHook(
+                typeof(Derived).GetMethod("Name").MakeGenericMethod(typeof(int)),
+                il =>
+                {
+                    var c = new ILCursor(il);
+                    c.Emit(OpCodes.Ldstr, "Hooked");
+                    c.Emit(OpCodes.Ret);
+                }
+            ))
+            {
+                Assert.Equal("Hooked", new Derived().Name<int>());
+            }
+        }
+
+        internal class Base
+        {
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public string Name<T>() => typeof(T).Name;
+        }
+
+        internal class Derived : Base
+        {
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         internal void DoNothing()
         {

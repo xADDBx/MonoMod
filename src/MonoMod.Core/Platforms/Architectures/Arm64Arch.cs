@@ -195,6 +195,17 @@ namespace MonoMod.Core.Platforms.Architectures
                               Bd,   Bd,   Bd,   Bd
                         }
                     ),
+                    // PrecodeFixupThunk, which .NET Core 3's tiering points FixupPrecodes back to so it can count calls
+                    // https://github.com/dotnet/coreclr/blob/c17d273aa03d4b9d14c92248a91f0d0faa881b98/src/vm/arm64/asmhelpers.S#L145-L160
+                    new BytePattern(new AddressMeaning(AddressKind.PrecodeFixupThunkRel64, relativeOffset: 0),
+                        mustMatchAtStart: true,
+                        0x8d, 0x3d, 0x40, 0x39, // ldrb w13, [x12, #15]
+                        0x8e, 0x39, 0x40, 0x39, // ldrb w14, [x12, #14]
+                        0x8c, 0x4d, 0x2d, 0x8b, // add x12, x12, w13, uxtw #3
+                        0x8d, 0x51, 0x2d, 0x8b, // add x13, x12, w13, uxtw #4
+                        0xad, 0x0d, 0x40, 0xf9, // ldr x13, [x13, #24]
+                        0xac, 0x4d, 0x2e, 0x8b  // add x12, x13, w14, uxtw #3
+                    ),
                 };
 
                 // .NET 7+ Support

@@ -4,6 +4,7 @@ using New::MonoMod.RuntimeDetour;
 using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -79,6 +80,25 @@ namespace MonoMod.UnitTest
                 // and then try again
             }
         }
+
+        [Fact]
+        public void HookAfterTieringDelay()
+        {
+            // the first hook starts a tiering delay; once it ends, .NET Core 3 unbinds Unbound to count its calls
+            using (new Hook(() => Unbound(), () => Replacement()))
+            {
+            }
+            Thread.Sleep(1000);
+            using (new Hook(() => Unbound(), () => Replacement()))
+            {
+                Assert.Equal(2, Unbound());
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static int Unbound() => 1;
+
+        private static int Replacement() => 2;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void Empty() { }

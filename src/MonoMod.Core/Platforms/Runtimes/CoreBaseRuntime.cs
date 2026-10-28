@@ -1,8 +1,6 @@
 ﻿using MonoMod.Core.Utils;
 using MonoMod.Utils;
 using System;
-using System.IO;
-using System.Linq;
 
 namespace MonoMod.Core.Platforms.Runtimes
 {
@@ -65,11 +63,8 @@ namespace MonoMod.Core.Platforms.Runtimes
 
         public override RuntimeKind Target => RuntimeKind.CoreCLR;
 
-        protected ISystem System { get; }
-
-        protected CoreBaseRuntime(ISystem system)
+        protected CoreBaseRuntime(ISystem system) : base(system)
         {
-            System = system;
             if (system.DefaultAbi is { } abi)
             {
                 if (PlatformDetection.Architecture == ArchitectureKind.x86_64)
@@ -86,61 +81,6 @@ namespace MonoMod.Core.Platforms.Runtimes
         void IInitialize.Initialize()
         {
             InstallJitHook(JitObject);
-        }
-
-        private static bool IsMaybeClrJitPath(string path)
-            => Path.GetFileName(path) == DynDll.MakeDllName("clrjit");
-
-        protected virtual string GetClrJitPath()
-        {
-            string? clrjitFile = null;
-
-            if (Switches.TryGetSwitchValue(Switches.JitPath, out var swValue) && swValue is string jitPath)
-            {
-                if (!IsMaybeClrJitPath(jitPath))
-                {
-                    MMDbgLog.Warning($"Provided value for MonoMod.JitPath switch '{jitPath}' does not look like a ClrJIT path");
-                }
-                else
-                {
-                    clrjitFile = System.EnumerateLoadedModuleFiles()
-                        .FirstOrDefault(f => f is not null && f == jitPath);
-                    if (clrjitFile is null)
-                    {
-                        MMDbgLog.Warning($"Provided path for MonoMod.JitPath switch was not loaded in this process. jitPath: {jitPath}");
-                    }
-                }
-            }
-
-            clrjitFile ??= System.EnumerateLoadedModuleFiles()
-                .FirstOrDefault(f => f is not null && IsMaybeClrJitPath(f));
-
-            if (clrjitFile is null)
-                throw new PlatformNotSupportedException("Could not locate clrjit library");
-
-            MMDbgLog.Trace($"Got jit path: {clrjitFile}");
-            return clrjitFile;
-        }
-
-        private IntPtr? lazyJitObject;
-        protected IntPtr JitObject => lazyJitObject ??= GetJitObject();
-
-        private unsafe IntPtr GetJitObject()
-        {
-            var path = GetClrJitPath();
-
-            if (!DynDll.TryOpenLibrary(path, out var clrjit))
-                throw new PlatformNotSupportedException("Could not open clrjit library");
-
-            try
-            {
-                return ((delegate* unmanaged[Stdcall]<IntPtr>)DynDll.GetExport(clrjit, "getJit"))();
-            }
-            catch
-            {
-                DynDll.CloseLibrary(clrjit);
-                throw;
-            }
         }
 
         protected virtual void InstallJitHook(IntPtr jit) => InstallManagedJitHook(jit);

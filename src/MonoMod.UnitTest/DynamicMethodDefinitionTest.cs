@@ -17,6 +17,8 @@ using OpCodes = Mono.Cecil.Cil.OpCodes;
 
 namespace MonoMod.UnitTest
 {
+    [CollectionDefinition(nameof(DynamicMethodDefinitionTest), DisableParallelization = true)]
+    [Collection(nameof(DynamicMethodDefinitionTest))]
     public class DynamicMethodDefinitionTest : TestBase
     {
         [Fact]

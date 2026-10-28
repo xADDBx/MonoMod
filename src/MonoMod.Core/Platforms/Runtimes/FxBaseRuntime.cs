@@ -7,6 +7,8 @@ namespace MonoMod.Core.Platforms.Runtimes
     {
         public override RuntimeKind Target => RuntimeKind.Framework;
 
+        protected FxBaseRuntime(ISystem system) : base(system) { }
+
         public static FxBaseRuntime CreateForVersion(Version version, ISystem system)
         {
             if (version.Major == 4)

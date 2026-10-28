@@ -18,6 +18,9 @@ namespace MonoMod.Core.Platforms.Runtimes
 
         protected override Guid ExpectedJitVersion => JitVersionGuid;
 
+        // MethodDesc gained a pointer-sized field
+        protected override (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8 + IntPtr.Size, false, 4);
+
         protected override int VtableIndexICorJitInfoAllocMem => V90.ICorJitInfoVtable.AllocMemIndex;
         protected override int ICorJitInfoFullVtableCount => V90.ICorJitInfoVtable.TotalVtableCount;
     }

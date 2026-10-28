@@ -10,7 +10,7 @@ using System.Threading;
 
 namespace MonoMod.Core.Platforms.Runtimes
 {
-    internal sealed class MonoRuntime : IRuntime
+    internal sealed partial class MonoRuntime : IRuntime
     {
         public RuntimeKind Target => RuntimeKind.Mono;
 
@@ -195,11 +195,6 @@ namespace MonoMod.Core.Platforms.Runtimes
                 throw new InvalidOperationException("Cannot use Mono system, because the underlying system doesn't provide a default ABI!");
             }
         }
-
-#pragma warning disable CS0067 // The event 'MonoRuntime.OnMethodCompiled' is never used
-        // The Mono runtime doesn't implement a JIT hook at the moment.
-        public event OnMethodCompiledCallback? OnMethodCompiled;
-#pragma warning restore CS0067 // The event 'MonoRuntime.OnMethodCompiled' is never used
 
         public unsafe void DisableInlining(MethodBase method)
         {

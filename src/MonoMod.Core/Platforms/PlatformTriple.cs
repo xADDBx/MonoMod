@@ -1,4 +1,4 @@
-using Mono.Cecil.Cil;
+﻿using Mono.Cecil.Cil;
 using MonoMod.Backports;
 using MonoMod.Core.Utils;
 using MonoMod.Logs;
@@ -291,39 +291,12 @@ namespace MonoMod.Core.Platforms
 
             // because the .NET reflection APIs are really bad, two MethodBases may not compare equal if they represent the same method
             // *but were gotten through different means*. Because MemberInfo.ReflectedType exists.
-            // In order to fix this, when getting an identifiable method, we make sure to correct it, by retrieving it directly from its declaring type (or module, as it may be)
-            if (method.ReflectedType != method.DeclaringType)
+            // In order to fix this, when getting an identifiable method, we make sure to correct it, by retrieving it directly from its declaring type
+            if (method.DeclaringType is { } declaringType && method.ReflectedType != declaringType)
             {
-                var parameters = method.GetParameters();
-                var paramTypes = new Type[parameters.Length];
-                for (var i = 0; i < parameters.Length; i++)
-                {
-                    paramTypes[i] = parameters[i].ParameterType;
-                }
-
-                if (method.DeclaringType is null)
-                {
-                    // the method lives on the module, get it from there
-                    var got = method.Module.GetMethod(method.Name, (BindingFlags)(-1), null, method.CallingConvention, paramTypes, null);
-                    Helpers.Assert(got is not null, $"orig: {method}, module: {method.Module}");
-                    method = got;
-                }
-                else
-                {
-                    // the method has a declaring type, get it there
-                    if (method.IsConstructor)
-                    {
-                        var got = method.DeclaringType.GetConstructor((BindingFlags)(-1), null, method.CallingConvention, paramTypes, null);
-                        Helpers.Assert(got is not null, $"orig: {method}");
-                        method = got;
-                    }
-                    else
-                    {
-                        var got = method.DeclaringType.GetMethod(method.Name, (BindingFlags)(-1), null, method.CallingConvention, paramTypes, null);
-                        Helpers.Assert(got is not null, $"orig: {method}");
-                        method = got;
-                    }
-                }
+                var got = MethodBase.GetMethodFromHandle(method.MethodHandle, declaringType.TypeHandle);
+                Helpers.Assert(got is not null, $"orig: {method}");
+                method = got;
             }
 
             return method;
@@ -643,16 +616,6 @@ namespace MonoMod.Core.Platforms
             if (from is not MethodInfo fromInfo || to is not MethodInfo toInfo)
                 return to;
 
-            var returnBufferIsArgument = false;
-            foreach (var arg in Abi.ArgumentOrder.Span)
-            {
-                if (arg is SpecialArgumentKind.ReturnBuffer)
-                {
-                    returnBufferIsArgument = true;
-                    break;
-                }
-            }
-
             // Whenever we detour a call from an instance method to a static one, `this` needs to
             // change its position to morph into a simple argument. Otherwise, it will be swapped
             // with the return buffer, causing a spectacular failure on the callee side:
@@ -671,9 +634,9 @@ namespace MonoMod.Core.Platforms
             // act as a simple passthrough.
             // However, TODO: this scenario can be optimized out of existence.
             var returnType = fromInfo.ReturnType;
-            var hasReturnBuffer = Abi.Classify(returnType, true) is TypeClassification.ByReference;
+            var hasReturnBuffer = HasReturnBufferArgument(returnType);
             var hasThis = !fromInfo.IsStatic;
-            var requiresReturnBufferFixup = hasThis && toInfo.IsStatic && hasReturnBuffer && returnBufferIsArgument;
+            var requiresReturnBufferFixup = hasThis && toInfo.IsStatic && hasReturnBuffer;
 
             // Whenever we detour a call from a generic method, depending on the ABI, we may
             // receive a generic context as an argument, which a callee never needs, at least
@@ -702,30 +665,100 @@ namespace MonoMod.Core.Platforms
             // RyuJITx86, so there is no value in optimizing for that scenario.
             var requiresGenericContextFixup = HasGenericContext(Abi) && Runtime.RequiresGenericContext(fromInfo);
 
+            // On Mono, a generic target only gets its type arguments when it is called, not when jumped to.
+            var requiresGenericTargetFixup = Runtime.Target is RuntimeKind.Mono
+                && (toInfo.IsGenericMethod || toInfo.DeclaringType is { IsGenericType: true });
+
             // Check if a fixup is needed for the current scenario.
-            if (!requiresReturnBufferFixup && !requiresGenericContextFixup)
+            if (!requiresReturnBufferFixup && !requiresGenericContextFixup && !requiresGenericTargetFixup)
             {
                 // `from` and `to` are considered compatible at this point.
                 // Thus, no ABI fixups are needed, return `to` as is.
                 return to;
             }
 
-            var returnBufferType = hasReturnBuffer ? returnType.MakeByRefType() : returnType;
-            var newReturnType = hasReturnBuffer && !Abi.ReturnsReturnBuffer ? typeof(void) : returnBufferType;
+            // Only the call is needed, so keep the signature of `from`. Mono moves the return buffer depending on the first argument type.
+            if (!requiresReturnBufferFixup && !requiresGenericContextFixup)
+                hasReturnBuffer = false;
 
+            var (newReturnType, argumentTypes, thisPos, returnBufferPos, _, userArgumentsOffset)
+                = GetNativeSignature(from, hasReturnBuffer, requiresGenericContextFixup);
+            var parameters = from.GetParameters();
+
+            Helpers.DAssert(thisPos >= 0 || !hasThis);
+            Helpers.DAssert(!hasReturnBuffer || returnBufferPos >= 0);
+            Helpers.DAssert(userArgumentsOffset >= 0);
+
+            using var dmd = new DynamicMethodDefinition(
+                DebugFormatter.Format($"Glue:AbiFixup<{from},{to}>"),
+                newReturnType, argumentTypes.ToArray()
+            );
+            // TODO: make DMD apply attributes to the generated DynamicMethod, when possible
+            dmd.Definition!.ImplAttributes |= Mono.Cecil.MethodImplAttributes.NoInlining |
+                (Mono.Cecil.MethodImplAttributes)(int)MethodImplOptionsEx.AggressiveOptimization;
+
+            var il = dmd.GetILProcessor();
+
+            // load return buffer
+            if (hasReturnBuffer)
+                il.Emit(OpCodes.Ldarg, returnBufferPos);
+
+            // load thisptr
+            if (hasThis)
+                il.Emit(OpCodes.Ldarg, thisPos);
+
+            // load user arguments
+            for (var i = 0; i < parameters.Length; i++)
+                il.Emit(OpCodes.Ldarg, i + userArgumentsOffset);
+
+            // call the target method
+            il.Emit(OpCodes.Call, il.Body.Method.Module.ImportReference(to));
+
+            // store the returned object
+            if (hasReturnBuffer)
+                il.Emit(OpCodes.Stobj, il.Body.Method.Module.ImportReference(returnType));
+
+            // if we need to return the pointer, do that
+            if (hasReturnBuffer && Abi.ReturnsReturnBuffer)
+                il.Emit(OpCodes.Ldarg, returnBufferPos);
+
+            // then we're done
+            il.Emit(OpCodes.Ret);
+
+            return dmd.Generate();
+        }
+
+        // Arm64 passes the return buffer in a register no argument takes
+        internal bool HasReturnBufferArgument(Type returnType)
+        {
+            foreach (var arg in Abi.ArgumentOrder.Span)
+            {
+                if (arg is SpecialArgumentKind.ReturnBuffer)
+                    return Abi.Classify(returnType, true) is TypeClassification.ByReference;
+            }
+            return false;
+        }
+
+        // The native return and argument types of method in ABI order, the positions of arguments not passed are -1.
+        internal (Type ReturnType, List<Type> Arguments, int ThisPos, int ReturnBufferPos, int ContextPos, int UserArgumentsOffset)
+            GetNativeSignature(MethodBase method, bool hasReturnBuffer, bool hasContext)
+        {
+            var returnType = method is MethodInfo info ? info.ReturnType : typeof(void);
+            var returnBufferType = hasReturnBuffer ? returnType.MakeByRefType() : returnType;
+            var hasThis = !method.IsStatic;
             var thisPos = -1;
             var returnBufferPos = -1;
+            var contextPos = -1;
             var userArgumentsOffset = -1;
-            var parameters = from.GetParameters();
+            var parameters = method.GetParameters();
             var argumentTypes = new List<Type>(parameters.Length + 3);
-            var argumentKinds = Abi.ArgumentOrder.Span;
-            for (var i = 0; i < argumentKinds.Length; i++)
+            foreach (var arg in Abi.ArgumentOrder.Span)
             {
-                switch (argumentKinds[i])
+                switch (arg)
                 {
                     case SpecialArgumentKind.ThisPointer when hasThis:
                         thisPos = argumentTypes.Count;
-                        argumentTypes.Add(from.GetThisParamType());
+                        argumentTypes.Add(method.GetThisParamType());
                         break;
 
                     case SpecialArgumentKind.ReturnBuffer when hasReturnBuffer:
@@ -733,7 +766,7 @@ namespace MonoMod.Core.Platforms
                         argumentTypes.Add(returnBufferType);
                         break;
 
-                    case SpecialArgumentKind.GenericContext when requiresGenericContextFixup:
+                    case SpecialArgumentKind.GenericContext when hasContext:
                         // Currently, we do the bare minimum: we acknowledge that
                         // the generic context exists. That's all. After that,
                         // we simply throw it out of the window and rely on
@@ -764,6 +797,7 @@ namespace MonoMod.Core.Platforms
                         // The generic context is passed as a pointer to a struct that
                         // contains all the needed (?) information.
                         // We can treat it as a simple `IntPtr`.
+                        contextPos = argumentTypes.Count;
                         argumentTypes.Add(typeof(nint));
                         break;
 
@@ -774,48 +808,8 @@ namespace MonoMod.Core.Platforms
                 }
             }
 
-            Helpers.DAssert(thisPos >= 0 || !hasThis);
-            // note: ARM64 (sysv) uses a dedicated register for the return buffer, so we don't record it as an argument
-            Helpers.DAssert(!Abi.ReturnsReturnBuffer || !hasReturnBuffer || returnBufferPos >= 0);
-            Helpers.DAssert(userArgumentsOffset >= 0);
-
-            using var dmd = new DynamicMethodDefinition(
-                DebugFormatter.Format($"Glue:AbiFixup<{from},{to}>"),
-                newReturnType, argumentTypes.ToArray()
-            );
-            // TODO: make DMD apply attributes to the generated DynamicMethod, when possible
-            dmd.Definition!.ImplAttributes |= Mono.Cecil.MethodImplAttributes.NoInlining |
-                (Mono.Cecil.MethodImplAttributes)(int)MethodImplOptionsEx.AggressiveOptimization;
-
-            var il = dmd.GetILProcessor();
-
-            // load return buffer
-            if (hasReturnBuffer && returnBufferPos >= 0)
-                il.Emit(OpCodes.Ldarg, returnBufferPos);
-
-            // load thisptr
-            if (hasThis)
-                il.Emit(OpCodes.Ldarg, thisPos);
-
-            // load user arguments
-            for (var i = 0; i < parameters.Length; i++)
-                il.Emit(OpCodes.Ldarg, i + userArgumentsOffset);
-
-            // call the target method
-            il.Emit(OpCodes.Call, il.Body.Method.Module.ImportReference(to));
-
-            // store the returned object
-            if (hasReturnBuffer && returnBufferPos >= 0)
-                il.Emit(OpCodes.Stobj, il.Body.Method.Module.ImportReference(returnType));
-
-            // if we need to return the pointer, do that
-            if (hasReturnBuffer && Abi.ReturnsReturnBuffer)
-                il.Emit(OpCodes.Ldarg, returnBufferPos);
-
-            // then we're done
-            il.Emit(OpCodes.Ret);
-
-            return dmd.Generate();
+            var nativeReturnType = hasReturnBuffer && !Abi.ReturnsReturnBuffer ? typeof(void) : returnBufferType;
+            return (nativeReturnType, argumentTypes, thisPos, returnBufferPos, contextPos, userArgumentsOffset);
         }
 
         private static bool HasGenericContext(Abi abi)

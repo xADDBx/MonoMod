@@ -6,7 +6,7 @@ using System.Reflection;
 namespace MonoMod.RuntimeDetour
 {
     /// <summary>
-    /// A <see cref="Hook"/>, <see cref="ILHook"/>, or <see cref="NativeHook"/>.
+    /// A <see cref="Hook"/>, <see cref="ILHook"/>, <see cref="NativeHook"/>, or <see cref="GenericHook"/>.
     /// </summary>
     public interface IDetour : IDisposable
     {

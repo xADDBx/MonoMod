@@ -3,6 +3,7 @@ using MonoMod.Core.Platforms.Memory;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -141,9 +142,12 @@ namespace MonoMod.UnitTest.Core
             IAllocatedMemory? reused = null;
             memAllocator.OnFree = () => memAllocator.TryAllocate(new(16), out reused);
 
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
+            // a conservative GC (Boehm on Unity Mono) can keep the cleanup callback alive through a collection (Unity x64 took two)
+            for (var i = 0; i < 10 && Volatile.Read(ref reused) is null; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
 
             Assert.NotNull(reused);
             Assert.Equal(1, memAllocator.FreedPages);

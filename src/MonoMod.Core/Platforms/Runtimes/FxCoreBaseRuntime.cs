@@ -9,7 +9,7 @@ using DynamicMethod = System.Reflection.Emit.DynamicMethod;
 
 namespace MonoMod.Core.Platforms.Runtimes
 {
-    internal abstract class FxCoreBaseRuntime : IRuntime
+    internal abstract partial class FxCoreBaseRuntime : IRuntime
     {
 
         public abstract RuntimeKind Target { get; }
@@ -81,8 +81,11 @@ namespace MonoMod.Core.Platforms.Runtimes
             }
         }
 
-        protected FxCoreBaseRuntime()
+        protected ISystem System { get; }
+
+        protected FxCoreBaseRuntime(ISystem system)
         {
+            System = system;
             if (PlatformDetection.Architecture == ArchitectureKind.x86)
             {
                 // On x86/RyuJIT, the runtime uses its own really funky ABI
@@ -149,6 +152,10 @@ namespace MonoMod.Core.Platforms.Runtimes
         {
             if (RTDynamicMethod_m_owner != null && method.GetType() == RTDynamicMethod)
                 return (MethodBase)RTDynamicMethod_m_owner.GetValue(method)!;
+            // the JIT reports shared code with its canonical MethodDesc, which isn't the one MakeGenericMethod returns
+            if (method is MethodInfo { IsGenericMethod: true, IsGenericMethodDefinition: false } info
+                && info.GetGenericArguments() is var args && args.Any(ContainsCanon))
+                return info.GetGenericMethodDefinition().MakeGenericMethod(args);
             return method;
         }
 
@@ -389,7 +396,9 @@ namespace MonoMod.Core.Platforms.Runtimes
         public virtual void Compile(MethodBase method)
         {
             var handle = GetMethodHandle(method);
-            RuntimeHelpers.PrepareMethod(handle);
+            // .NET Framework needs the instantiation to prepare methods of shared generic types (Foo<__Canon>)
+            RuntimeHelpers.PrepareMethod(handle, method.DeclaringType is { IsGenericType: true }
+                ? GenericSharing.TypeArguments(method).Select(t => t.TypeHandle).ToArray() : null);
             Helpers.Assert(TryInvokeBclCompileMethod(handle));
 
             if (method.IsVirtual && (method.DeclaringType?.IsValueType ?? false))
@@ -429,6 +438,14 @@ namespace MonoMod.Core.Platforms.Runtimes
 
         protected static readonly bool IsDebugClr = Switches.TryGetSwitchEnabled(Switches.DebugClr, out var isEnabled) && isEnabled;
 
+        protected static readonly int MethodDescDebugSize = IsDebugClr ? 0 // #ifdef _DEBUG
+            + IntPtr.Size   // LPCUTF8 m_pszDebugMethodName;
+            + IntPtr.Size   // LPCUTF8 m_pszDebugClassName;
+            + IntPtr.Size   // LPCUTF8 m_pszDebugMethodSignature;
+            + IntPtr.Size   // FixupPointer<PTR_MethodTable> m_pDebugMethodTable;
+            + IntPtr.Size   // PTR_GCCoverageInfo m_GcCover;
+            : 0;            // #endif
+
         // It seems that across all versions of Framework and Core, the layout of the start of a MethodDesc is quite consistent
         public unsafe virtual void DisableInlining(MethodBase method)
         {
@@ -437,16 +454,9 @@ namespace MonoMod.Core.Platforms.Runtimes
             // References to RuntimeMethodHandle (CORINFO_METHOD_HANDLE) pointing to MethodDesc
             // can be traced as far back as https://ntcore.com/files/netint_injection.htm
 
-            var handle = GetMethodHandle(method);
+            var handle = GetCodeHandle(method);
 
-            var offset = 0
-              + (IsDebugClr ? 0 // #ifdef _DEBUG
-                + IntPtr.Size   // LPCUTF8 m_pszDebugMethodName;
-                + IntPtr.Size   // LPCUTF8 m_pszDebugClassName;
-                + IntPtr.Size   // LPCUTF8 m_pszDebugMethodSignature;
-                + IntPtr.Size   // FixupPointer<PTR_MethodTable> m_pDebugMethodTable;
-                + IntPtr.Size   // PTR_GCCoverageInfo m_GcCover;
-              : 0)              // #endif
+            var offset = MethodDescDebugSize
               + 2 // UINT16 m_wFlags3AndTokenRemainder
               + 1 // BYTE m_chunkIndex
               + 1 // BYTE m_chunkIndex
@@ -489,16 +499,16 @@ namespace MonoMod.Core.Platforms.Runtimes
             else
             {
                 // Your typical method.
-                var handle = GetMethodHandle(method);
+                var handle = GetCodeHandle(method);
                 return handle.GetFunctionPointer();
             }
         }
 
-        public event OnMethodCompiledCallback? OnMethodCompiled;
+        public virtual event OnMethodCompiledCallback? OnMethodCompiled;
 
         [SuppressMessage("Design", "CA1031:Do not catch general exception types",
             Justification = "We catch exceptions here to log them and not ignore them, as this method's caller would.")]
-        protected virtual void OnMethodCompiledCore(
+        protected internal virtual void OnMethodCompiledCore(
             RuntimeTypeHandle declaringType,
             RuntimeMethodHandle methodHandle,
             ReadOnlyMemory<RuntimeTypeHandle>? genericTypeArguments,

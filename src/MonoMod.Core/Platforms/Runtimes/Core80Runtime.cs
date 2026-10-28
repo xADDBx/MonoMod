@@ -18,6 +18,8 @@ namespace MonoMod.Core.Platforms.Runtimes
 
         protected override Guid ExpectedJitVersion => JitVersionGuid;
 
+        protected override (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8, false, 4);
+
         protected override int VtableIndexICorJitInfoAllocMem => V80.ICorJitInfoVtable.AllocMemIndex;
         protected override int ICorJitInfoFullVtableCount => V80.ICorJitInfoVtable.TotalVtableCount;
     }

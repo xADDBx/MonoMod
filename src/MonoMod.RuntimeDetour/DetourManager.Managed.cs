@@ -226,11 +226,7 @@ namespace MonoMod.RuntimeDetour
             {
                 if (syncDetour is null)
                 {
-                    var detour = syncDetour = factory.CreateDetour(new(Entry, SyncInfo.SyncProxy!)
-                    {
-                        ApplyByDefault = false,
-                        CreateSourceCloneIfNotILClone = true,
-                    });
+                    var detour = syncDetour = CreateRootDetour(factory, Entry, SyncInfo.SyncProxy!);
 
                     if (detour is ICoreDetourWithClone { SourceMethodClone: { } clone } detourWithClone)
                     {
@@ -289,6 +285,7 @@ namespace MonoMod.RuntimeDetour
             public MethodInfo? SourceClone;
             public DynamicMethodDefinition? SourceCloneIl;
             public MethodInfo? EndOfChain;
+            public volatile bool HookCreated;
 
             public ManagedDetourState(MethodBase src)
             {
@@ -745,10 +742,18 @@ namespace MonoMod.RuntimeDetour
 
         private static readonly ConcurrentDictionary<MethodBase, ManagedDetourState> detourStates = new();
 
+        private static ManagedDetourState GetOrAddDetourState(MethodBase method)
+            => detourStates.GetOrAdd(PlatformTriple.Current.GetIdentifiable(method), static m => new(m));
+
+        // only for creating hooks: marks the method and offers it to GenericHooks, unlike GetDetourInfo
         internal static ManagedDetourState GetDetourState(MethodBase method)
         {
-            method = PlatformTriple.Current.GetIdentifiable(method);
-            return detourStates.GetOrAdd(method, static m => new(m));
+            var state = GetOrAddDetourState(method);
+            state.HookCreated = true;
+            // GenericHook.Apply registers the hook, then looks for hooked methods: one of the two sees the other
+            Thread.MemoryBarrier();
+            GenericHook.OfferInstantiation(state.Source, wait: false);
+            return state;
         }
 
         /// <summary>
@@ -757,7 +762,7 @@ namespace MonoMod.RuntimeDetour
         /// <param name="method">The <see cref="MethodBase"/> to get a <see cref="MethodDetourInfo"/> for.</param>
         /// <returns>The <see cref="MethodDetourInfo"/> for <paramref name="method"/>.</returns>
         public static MethodDetourInfo GetDetourInfo(MethodBase method)
-            => GetDetourState(method).Info;
+            => GetOrAddDetourState(method).Info;
 
         /// <summary>
         /// An event which is invoked whenever a detour is applied.

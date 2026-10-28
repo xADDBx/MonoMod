@@ -53,14 +53,14 @@ internal sealed record Dotnet : Enableable
             Name = ".NET Core 3.0",
             Sdk = "3.0",
             TFM = "netcoreapp3.0",
-            RIDs = ["win-x86", "win-x64", "linux-x64", "osx-x64"]
+            RIDs = ["win-x86", "win-x64", "linux-x64", "linux-arm64", "osx-x64"]
         },
         new()
         {
             Name = ".NET Core 3.1",
             Sdk = "3.1",
             TFM = "netcoreapp3.1",
-            RIDs = ["win-x86", "win-x64", "linux-x64", "osx-x64"]
+            RIDs = ["win-x86", "win-x64", "linux-x64", "linux-arm64", "osx-x64"]
         },
         new()
         {

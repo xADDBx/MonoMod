@@ -28,7 +28,8 @@ namespace MonoMod.Core.Platforms
         /// An event which is invoked when a method is compiled.
         /// </summary>
         /// <remarks>
-        /// This event will only be invoked when <see cref="Features"/> includes <see cref="RuntimeFeature.CompileMethodHook"/>.
+        /// This event is invoked when <see cref="Features"/> includes <see cref="RuntimeFeature.CompileMethodHook"/>. Without it,
+        /// .NET Framework 4.6+ invokes it too, and Mono 5.6+ only for generic instantiations with value type arguments.
         /// </remarks>
         event OnMethodCompiledCallback? OnMethodCompiled;
 

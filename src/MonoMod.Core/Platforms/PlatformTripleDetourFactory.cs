@@ -10,7 +10,7 @@ namespace MonoMod.Core.Platforms
     /// <summary>
     /// An <see cref="IDetourFactory"/> implementation based on <see cref="PlatformTriple"/>.
     /// </summary>
-    internal sealed class PlatformTripleDetourFactory : IDetourFactory
+    internal sealed partial class PlatformTripleDetourFactory : IDetourFactory
     {
 
         private readonly PlatformTriple triple;
@@ -290,12 +290,26 @@ namespace MonoMod.Core.Platforms
 
             private new ManagedDetourBox DetourBox => GetDetourBox<ManagedDetourBox>();
 
-            public Detour(PlatformTriple triple, MethodBase src, MethodBase dst) : base(triple)
+            private readonly bool createAltEntry;
+            private readonly IntPtr nativeTarget;
+            // not disposed on Undo, other threads may still be running through the alternate entry point
+#pragma warning disable CA2213 // Disposable fields should be disposed
+            private IDisposable? altHandle;
+#pragma warning restore CA2213 // Disposable fields should be disposed
+
+            // zero if not requested or the architecture can't create one
+            public IntPtr AltEntry { get; private set; }
+
+            // a shared body's dst already takes the native arguments of src and needs no ABI fixup, and the body keeps an alternate
+            // entry point; nativeTarget is code to detour to instead
+            public Detour(PlatformTriple triple, MethodBase src, MethodBase dst, bool sharedBody = false, IntPtr nativeTarget = default) : base(triple)
             {
+                createAltEntry = sharedBody;
+                this.nativeTarget = nativeTarget;
                 Source = triple.GetIdentifiable(src);
                 Target = dst;
 
-                realTarget = triple.GetRealDetourTarget(src, dst);
+                realTarget = sharedBody ? dst : triple.GetRealDetourTarget(src, dst);
 
                 base.DetourBox = new ManagedDetourBox(triple, Source, realTarget);
 
@@ -309,8 +323,15 @@ namespace MonoMod.Core.Platforms
             private static readonly object subLock = new();
             private static bool hasSubscribed;
 
+            // the method the compile hook is reporting on this thread, which can't be compiled again from inside the compiler
+            [ThreadStatic]
+            internal static (MethodBase Method, IntPtr Code, IntPtr CodeRw, int Size)? KnownBody;
+            // detours being created on this thread, whose compilations the generic compile hook must ignore
+            [ThreadStatic]
+            internal static int CreatingDepth;
+
             // TODO: this currently assumes a singleton PlatformTriple. That isn't necessarily *always* the case, though it should be.
-            private static void EnsureSubscribed(PlatformTriple triple)
+            internal static void EnsureSubscribed(PlatformTriple triple)
             {
                 if (Volatile.Read(ref hasSubscribed))
                     return;
@@ -410,12 +431,38 @@ namespace MonoMod.Core.Platforms
                 srcPin = Triple.PinMethodIfNeeded(Source);
                 dstPin = Triple.PinMethodIfNeeded(realTarget);
 
-                Triple.Compile(Source);
-                var from = Triple.GetNativeMethodBody(Source);
-                Triple.Compile(realTarget);
-                var to = Triple.Runtime.GetMethodHandle(realTarget).GetFunctionPointer();
+                CreatingDepth++;
+                try
+                {
+                    IntPtr from, fromRw = default;
+                    var maxSize = -1;
+                    if (KnownBody is { } known && known.Method.Equals(Source))
+                    {
+                        (from, fromRw, maxSize) = (known.Code, known.CodeRw, known.Size);
+                    }
+                    else
+                    {
+                        Triple.Compile(Source);
+                        from = Triple.GetNativeMethodBody(Source);
+                    }
+                    var to = nativeTarget;
+                    if (to == IntPtr.Zero)
+                    {
+                        Triple.Compile(realTarget);
+                        to = Triple.Runtime.GetMethodHandle(realTarget).GetFunctionPointer();
+                    }
 
-                return Triple.CreateSimpleDetour(from, to);
+                    // alternate entry points are decoded from the executable code, which isn't written yet when it has a separate writable mapping
+                    if (!createAltEntry || fromRw != default && fromRw != from)
+                        return Triple.CreateSimpleDetour(from, to, maxSize, fromRw);
+
+                    (var simple, AltEntry, altHandle) = Triple.CreateNativeDetour(from, to, maxSize, fromRw);
+                    return simple;
+                }
+                finally
+                {
+                    CreatingDepth--;
+                }
             }
 
             protected override void BeforeUndo()

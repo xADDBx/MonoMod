@@ -706,8 +706,8 @@ namespace MonoMod.RuntimeDetour
 
         private void CheckSupported()
         {
-            if (Source.IsGenericMethod || Source.DeclaringType is { IsGenericType: true })
-                throw new ArgumentException("Source method is generic, generic hooks are not supported");
+            if (Source.ContainsGenericParameters)
+                throw new ArgumentException("Source method is an open generic method, hook a closed instantiation of it instead");
             
             if ((Source.GetMethodImplementationFlags() & (MethodImplAttributes)0x2000 /* MethodImplAttributes.Async */) != 0)
                 throw new ArgumentException("Source method is runtime-async, runtime-async hooks are not supported");

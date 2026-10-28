@@ -4,7 +4,6 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
-using System.Reflection.Emit;
 using System.Runtime.InteropServices;
 using static MonoMod.Core.Interop.CoreCLR;
 using MC = Mono.Cecil;
@@ -39,12 +38,26 @@ namespace MonoMod.Core.Platforms.Runtimes
         }
         */
 
-        private static readonly Func<Core21Runtime, JitHookHelpersHolder> createJitHookHelpersFunc = CreateJitHookHelpers;
-        private static JitHookHelpersHolder CreateJitHookHelpers(Core21Runtime self) => new(self);
+        // InstantiatedMethodDesc (src/vm/method.hpp): offset of m_pWrappedMethodDesc, and the m_wFlags2 kind of instantiating stubs.
+        // Reflection may also give out the shared MethodDesc itself, which has its dictionary layout at that offset.
+        protected virtual (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8, true, 3);
 
-        private readonly object sync = new();
-        private JitHookHelpersHolder? lazyJitHookHelpers;
-        protected unsafe JitHookHelpersHolder JitHookHelpers => Helpers.GetOrInitWithLock(ref lazyJitHookHelpers, sync, createJitHookHelpersFunc, this);
+        // reflection only gives out instantiating stubs for __Canon instantiations which need a generic context
+        private bool IsCanonInstantiatingStub(MethodBase method)
+            => RequiresGenericContext(method)
+            && (method.DeclaringType is { } declType && ContainsCanon(declType) || method.IsGenericMethod && method.GetGenericArguments().Any(ContainsCanon));
+
+        protected override unsafe RuntimeMethodHandle GetCodeHandle(MethodBase method)
+        {
+            method = GetIdentifiable(method);
+            var handle = GetMethodHandle(method);
+            var (offset, relative, stubKind) = WrappedMethodDescLayout;
+            var field = (byte*)handle.Value + MethodDescDebugSize + offset;
+            // m_wFlags2 follows the wrapped MethodDesc and the dictionary pointer
+            if (!IsCanonInstantiatingStub(method) || (*(ushort*)(field + 2 * IntPtr.Size) & 0x7) != stubKind)
+                return handle;
+            return JitHookHelpers.CreateHandleForHandlePointer(relative ? (IntPtr)(field + *(nint*)field) : *(IntPtr*)field);
+        }
 
         // src/inc/corinfo.h line 216
         // 0ba106c8-81a0-407f-99a1-928448c1eb62
@@ -60,13 +73,9 @@ namespace MonoMod.Core.Platforms.Runtimes
         protected virtual int VtableIndexICorJitCompilerGetVersionGuid => 4;
         protected virtual int VtableIndexICorJitCompilerCompileMethod => 0;
 
-        protected virtual InvokeCompileMethodPtr InvokeCompileMethodPtr => V21.InvokeCompileMethodPtr;
-
         protected virtual Delegate CastCompileHookToRealType(Delegate del)
             => del.CastDelegate<V21.CompileMethodDelegate>();
 
-        protected static unsafe IntPtr* GetVTableEntry(IntPtr @object, int index)
-            => (*(IntPtr**)@object) + index;
         protected static unsafe IntPtr ReadObjectVTable(IntPtr @object, int index)
             => *GetVTableEntry(@object, index);
 
@@ -108,34 +117,30 @@ namespace MonoMod.Core.Platforms.Runtimes
             System.PatchData(PatchTargetKind.ReadOnly, (IntPtr)compileMethodSlot, ptrData, default);
         }
 
-        protected unsafe virtual void InvokeCompileMethodToPrepare(IntPtr method)
-        {
-            V21.CORINFO_METHOD_INFO methodInfo;
-            byte* nativeStart;
-            uint nativeSize;
-            InvokeCompileMethodPtr.InvokeCompileMethod(method, IntPtr.Zero, IntPtr.Zero, &methodInfo, 0, &nativeStart, &nativeSize);
-        }
-
         // runtimes should override this if they need to significantly change the shape of CompileMethod
         protected unsafe virtual Delegate CreateCompileMethodDelegate(IntPtr compileMethod)
         {
-            var del = new JitHookDelegateHolder(this, InvokeCompileMethodPtr, compileMethod).CompileMethodHook;
+            var del = new JitHookDelegateHolder(this, NativeExceptionHelper, InvokeCompileMethodPtr, compileMethod).CompileMethodHook;
             return del;
         }
 
+        // .NET Framework 4.6+ uses RyuJIT, whose compileMethod has the same signature
+        internal static unsafe V21.CompileMethodDelegate CreateFxCompileMethodHook(FxCoreBaseRuntime runtime, InvokeCompileMethodPtr icmp, IntPtr compileMethod)
+            => new JitHookDelegateHolder(runtime, null, icmp, compileMethod).CompileMethodHook;
+
         private sealed class JitHookDelegateHolder
         {
-            public readonly Core21Runtime Runtime;
+            public readonly FxCoreBaseRuntime Runtime;
             public readonly INativeExceptionHelper? NativeExceptionHelper;
             public readonly GetExceptionSlot? GetNativeExceptionSlot;
             public readonly JitHookHelpersHolder JitHookHelpers;
             public readonly InvokeCompileMethodPtr InvokeCompileMethodPtr;
             public readonly IntPtr CompileMethodPtr;
 
-            public JitHookDelegateHolder(Core21Runtime runtime, InvokeCompileMethodPtr icmp, IntPtr compileMethod)
+            public JitHookDelegateHolder(FxCoreBaseRuntime runtime, INativeExceptionHelper? exceptionHelper, InvokeCompileMethodPtr icmp, IntPtr compileMethod)
             {
                 Runtime = runtime;
-                NativeExceptionHelper = runtime.NativeExceptionHelper;
+                NativeExceptionHelper = exceptionHelper;
                 JitHookHelpers = runtime.JitHookHelpers;
                 InvokeCompileMethodPtr = icmp;
                 CompileMethodPtr = compileMethod;
@@ -256,142 +261,12 @@ namespace MonoMod.Core.Platforms.Runtimes
             }
         }
 
-        protected virtual MethodInfo MakeCreateRuntimeMethodInfoStub(Type methodHandleInternal)
-        {
-            var runtimeMethodInfoStubCtorArgs = new[] { typeof(IntPtr), typeof(object) };
-            var runtimeMethodInfoStub = typeof(RuntimeMethodHandle).Assembly.GetType("System.RuntimeMethodInfoStub");
-            Helpers.DAssert(runtimeMethodInfoStub is not null);
-            var runtimeMethodInfoStubCtor = runtimeMethodInfoStub.GetConstructor(runtimeMethodInfoStubCtorArgs);
-            Helpers.DAssert(runtimeMethodInfoStubCtor is not null);
-
-            MethodInfo runtimeMethodInfoStubCtorWrapper;
-            using (var dmd = new DynamicMethodDefinition(
-                    "new RuntimeMethodInfoStub", runtimeMethodInfoStub, runtimeMethodInfoStubCtorArgs
-                ))
-            {
-                var il = dmd.GetILGenerator();
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Newobj, runtimeMethodInfoStubCtor);
-                il.Emit(OpCodes.Ret);
-
-                runtimeMethodInfoStubCtorWrapper = dmd.Generate();
-            }
-
-            return runtimeMethodInfoStubCtorWrapper;
-        }
-
-        protected sealed class JitHookHelpersHolder
-        {
-            public delegate object MethodHandle_GetLoaderAllocatorD(IntPtr methodHandle);
-            public delegate object CreateRuntimeMethodInfoStubD(IntPtr methodHandle, object loaderAllocator);
-            public delegate RuntimeMethodHandle CreateRuntimeMethodHandleD(object runtimeMethodInfo);
-            public delegate Type GetDeclaringTypeOfMethodHandleD(IntPtr methodHandle);
-            public delegate Type GetTypeFromNativeHandleD(IntPtr handle);
-
-            public readonly MethodHandle_GetLoaderAllocatorD MethodHandle_GetLoaderAllocator;
-            public readonly CreateRuntimeMethodInfoStubD CreateRuntimeMethodInfoStub;
-            public readonly CreateRuntimeMethodHandleD CreateRuntimeMethodHandle;
-            public readonly GetDeclaringTypeOfMethodHandleD GetDeclaringTypeOfMethodHandle;
-            public readonly GetTypeFromNativeHandleD GetTypeFromNativeHandle;
-
-            public RuntimeMethodHandle CreateHandleForHandlePointer(IntPtr handle)
-                => CreateRuntimeMethodHandle(CreateRuntimeMethodInfoStub(handle, MethodHandle_GetLoaderAllocator(handle)));
-
-            public JitHookHelpersHolder(Core21Runtime runtime)
-            {
-
-                const BindingFlags StaticNonPublic = BindingFlags.Static | BindingFlags.NonPublic;
-
-                // GetLoaderAllocator should always be present
-                { // set up GetLoaderAllocator
-                    var getLoaderAllocator = typeof(RuntimeMethodHandle).GetMethod("GetLoaderAllocator", StaticNonPublic);
-                    Helpers.DAssert(getLoaderAllocator is not null);
-
-                    MethodInfo invokeWrapper;
-                    using (var dmd = new DynamicMethodDefinition(
-                            "MethodHandle_GetLoaderAllocator", typeof(object), new Type[] { typeof(IntPtr) }
-                        ))
-                    {
-                        var il = dmd.GetILGenerator();
-                        var paramType = getLoaderAllocator.GetParameters().First().ParameterType;
-                        il.Emit(OpCodes.Ldarga_S, 0);
-                        // Unsafe.As shouldn't be needed
-                        //il.Emit(OpCodes.Call, Unsafe_As.MakeGenericMethod(typeof(IntPtr), paramType));
-                        il.Emit(OpCodes.Ldobj, paramType);
-                        il.Emit(OpCodes.Call, getLoaderAllocator);
-                        il.Emit(OpCodes.Ret);
-
-                        invokeWrapper = dmd.Generate();
-                    }
-
-                    MethodHandle_GetLoaderAllocator = invokeWrapper.CreateDelegate<MethodHandle_GetLoaderAllocatorD>();
-                }
-
-                { // set up GetTypeFromNativeHandle
-                    var getTypeFromHandleUnsafe = runtime.GetOrCreateGetTypeFromHandleUnsafe();
-                    GetTypeFromNativeHandle = getTypeFromHandleUnsafe.CreateDelegate<GetTypeFromNativeHandleD>();
-                }
-
-                var methodHandleInternal = typeof(RuntimeMethodHandle).Assembly.GetType("System.RuntimeMethodHandleInternal");
-                Helpers.DAssert(methodHandleInternal is not null);
-
-                { // set up GetDeclaringTypeOfMethodHandle
-                    var getDeclaringType = typeof(RuntimeMethodHandle).GetMethod("GetDeclaringType", StaticNonPublic, null, [methodHandleInternal], null);
-                    Helpers.DAssert(getDeclaringType is not null);
-
-                    MethodInfo invokeWrapper;
-                    using (var dmd = new DynamicMethodDefinition(
-                            "GetDeclaringTypeOfMethodHandle", typeof(Type), [typeof(IntPtr)]
-                        ))
-                    {
-                        var il = dmd.GetILGenerator();
-                        il.Emit(OpCodes.Ldarga_S, 0);
-                        // Unsafe.As shouldn't be needed
-                        //il.Emit(OpCodes.Call, Unsafe_As.MakeGenericMethod(typeof(IntPtr), methodHandleInternal));
-                        il.Emit(OpCodes.Ldobj, methodHandleInternal);
-                        il.Emit(OpCodes.Call, getDeclaringType);
-                        il.Emit(OpCodes.Ret);
-
-                        invokeWrapper = dmd.Generate();
-                    }
-
-                    GetDeclaringTypeOfMethodHandle = invokeWrapper.CreateDelegate<GetDeclaringTypeOfMethodHandleD>();
-                }
-
-                { // set up CreateRuntimeMethodInfoStub
-                    CreateRuntimeMethodInfoStub = runtime
-                        .MakeCreateRuntimeMethodInfoStub(methodHandleInternal)
-                        .CreateDelegate<CreateRuntimeMethodInfoStubD>();
-                }
-
-                { // set up CreateRuntimeMethodHandle
-                    var ctor = typeof(RuntimeMethodHandle).GetConstructors(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).First();
-
-                    MethodInfo ctorWrapper;
-                    using (var dmd = new DynamicMethodDefinition(
-                            "new RuntimeMethodHandle", typeof(RuntimeMethodHandle), new Type[] { typeof(object) }
-                        ))
-                    {
-                        var il = dmd.GetILGenerator();
-                        il.Emit(OpCodes.Ldarg_0);
-                        il.Emit(OpCodes.Newobj, ctor);
-                        il.Emit(OpCodes.Ret);
-
-                        ctorWrapper = dmd.Generate();
-                    }
-
-                    CreateRuntimeMethodHandle = ctorWrapper.CreateDelegate<CreateRuntimeMethodHandleD>();
-                }
-            }
-        }
-
         /// <summary>
         /// This method gets or creates the internal call for Type.GetTypeFromHandleUnsafe.
         /// The internal call always exists, but the managed method doesn't in some cases.
         /// </summary>
         /// <returns></returns>
-        protected virtual MethodInfo GetOrCreateGetTypeFromHandleUnsafe()
+        protected override MethodInfo GetOrCreateGetTypeFromHandleUnsafe()
         {
             const string MethodName = "GetTypeFromHandleUnsafe";
             var method = typeof(Type).GetMethod(MethodName, (BindingFlags)(-1));

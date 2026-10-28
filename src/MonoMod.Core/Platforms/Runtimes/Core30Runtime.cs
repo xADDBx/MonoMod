@@ -20,6 +20,8 @@ namespace MonoMod.Core.Platforms.Runtimes
 
         protected override Guid ExpectedJitVersion => JitVersionGuid;
 
+        protected override (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8, false, 3);
+
         protected override InvokeCompileMethodPtr InvokeCompileMethodPtr => V30.InvokeCompileMethodPtr;
 
         protected override Delegate CastCompileHookToRealType(Delegate del)

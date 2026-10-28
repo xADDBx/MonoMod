@@ -18,6 +18,10 @@ RUN apt-get update \
  && apt-get install --no-install-recommends -y \
         nodejs \
         dotnet-runtime-10.0 \
+# Dependencies for older runtimes
+ && wget -O libssl1.1.deb http://ports.ubuntu.com/ubuntu-ports/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_arm64.deb \
+ && dpkg -i libssl1.1.deb \
+ && rm libssl1.1.deb \
  && apt-get remove -y apt-transport-https software-properties-common \
  && apt-get autoremove -y \
  && apt-get clean \

@@ -39,6 +39,12 @@ namespace MonoMod.Core.Interop
             (_DEBUG && (TARGET_AMD64 || TARGET_ARM64 || TARGET_ARM) && !PlatformDetection.OS.Is(OSKind.Android))
             || PlatformDetection.OS.Is(OSKind.IOS);
 
+        public static readonly bool FEATURE_TIERED_COMPILATION = !PlatformDetection.OS.Is(OSKind.IOS);
+
+        public static readonly bool FEATURE_ON_STACK_REPLACEMENT = TARGET_64BIT && FEATURE_TIERED_COMPILATION;
+
+        public static readonly bool HAVE_GCCOVER = _DEBUG;
+
         // clrfeatures.cmake: only for WASM, which MonoMod does not run on. Not const, so code under it stays reachable.
         [SuppressMessage("Performance", "CA1802:Use literals where appropriate", Justification = "See above.")]
         [SuppressMessage("Performance", "CA1805:Do not initialize unnecessarily", Justification = "Stated for clarity.")]

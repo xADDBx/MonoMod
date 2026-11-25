@@ -9,7 +9,7 @@ using DynamicMethod = System.Reflection.Emit.DynamicMethod;
 
 namespace MonoMod.Core.Platforms.Runtimes
 {
-    internal abstract class FxCoreBaseRuntime : IRuntime
+    internal abstract partial class FxCoreBaseRuntime : IRuntime
     {
         public abstract RuntimeKind Target { get; }
 

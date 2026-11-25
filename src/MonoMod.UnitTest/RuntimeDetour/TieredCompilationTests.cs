@@ -3,6 +3,7 @@
 using New::MonoMod.RuntimeDetour;
 using System;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Xunit;
 using Xunit.Abstractions;
@@ -135,6 +136,46 @@ namespace MonoMod.UnitTest
                 From();
                 Assert.True(TargetHit);
             }
+        }
+
+        [SharedGenericFact]
+        public void SharedGenericWithTieredCompilation()
+        {
+            using (new Hook(typeof(TieredCompilationTests).GetMethod(nameof(SharedFrom), BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(typeof(string)),
+                ((Delegate)To).Method))
+            {
+                var sw = new Stopwatch();
+                for (var loop = 0; loop < 10; loop++)
+                {
+                    for (var i = 0; i < 1000; i++)
+                    {
+                        TargetHit = false;
+                        SharedFrom<string>();
+                        Assert.True(TargetHit, $"string, iteration {i} of loop {loop}");
+                        SharedFrom<object>();
+                        Assert.False(TargetHit, $"object, iteration {i} of loop {loop}");
+                    }
+                    sw.Restart();
+                    while (sw.ElapsedMilliseconds < 100)
+                        Empty();
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void SharedFrom<T>()
+        {
+            Empty();
+            Empty();
+            Empty();
+            Empty();
+            Empty();
+            TargetHit = false;
+            Empty();
+            Empty();
+            Empty();
+            Empty();
+            Empty();
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

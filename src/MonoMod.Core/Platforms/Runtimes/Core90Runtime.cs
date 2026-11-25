@@ -5,6 +5,9 @@ namespace MonoMod.Core.Platforms.Runtimes
 {
     internal class Core90Runtime : Core80Runtime
     {
+        // m_codeData was added to MethodDesc
+        protected override (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8 + IntPtr.Size, false, 4);
+
         public Core90Runtime(ISystem system, IArchitecture arch) : base(system, arch) { }
 
         // src/coreclr/inc/jiteeversionguid.h line 46

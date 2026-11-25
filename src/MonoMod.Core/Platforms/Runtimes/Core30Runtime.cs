@@ -6,6 +6,8 @@ namespace MonoMod.Core.Platforms.Runtimes
 {
     internal class Core30Runtime : Core21Runtime
     {
+        protected override (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8, false, 3);
+
         public Core30Runtime(ISystem system) : base(system) { }
 
 

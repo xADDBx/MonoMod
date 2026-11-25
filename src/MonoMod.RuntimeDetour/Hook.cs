@@ -706,8 +706,10 @@ namespace MonoMod.RuntimeDetour
 
         private void CheckSupported()
         {
-            if (Source.IsGenericMethod || Source.DeclaringType is { IsGenericType: true })
-                throw new ArgumentException("Source method is generic, generic hooks are not supported");
+            if (Source.ContainsGenericParameters)
+                throw new ArgumentException("Source method is an open generic method, hook its instantiations instead");
+            if (PlatformDetection.Runtime is RuntimeKind.Mono && (Source.IsGenericMethod || Source.DeclaringType is { IsGenericType: true }))
+                throw new ArgumentException("Source method is generic, generic hooks are not supported on Mono");
         }
 
         private void CheckDisposed()

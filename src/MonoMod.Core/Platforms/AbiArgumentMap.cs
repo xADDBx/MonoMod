@@ -366,6 +366,7 @@ namespace MonoMod.Core.Platforms
             {
                 // at least one argument type in the source isn't mapped anywhere in the target
                 result |= AbiArgumentMapResult.SourceHasUnmappedArguments;
+                isIdentity = false;
             }
 
             if (targetUserArgs < targetFromSourceMappedUserArgs.Length + sourceUserArgs.Length)

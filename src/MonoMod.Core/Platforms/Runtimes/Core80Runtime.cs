@@ -5,6 +5,8 @@ namespace MonoMod.Core.Platforms.Runtimes
 {
     internal class Core80Runtime : Core70Runtime
     {
+        protected override (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8, false, 4);
+
         public Core80Runtime(ISystem system, IArchitecture arch) : base(system, arch) { }
 
         // src/coreclr/inc/jiteeversionguid.h line 46

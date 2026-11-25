@@ -49,6 +49,15 @@ namespace MonoMod.Core.Platforms.Runtimes
         }
         */
 
+        protected override unsafe bool TryUnwrapInstantiatingStub(RuntimeMethodHandle handle, out RuntimeMethodHandle wrapped)
+        {
+            var md = (V48.MethodDesc*)handle.Value;
+            wrapped = md->IsInstantiatingStub && md->TryAsInstantiated(out var inst)
+                ? JitHookHelpers.CreateHandleForHandlePointer((IntPtr)inst->IMD_GetWrappedMethodDesc())
+                : default;
+            return wrapped != default;
+        }
+
         private unsafe IntPtr GetMethodBodyPtr(MethodBase method, RuntimeMethodHandle handle)
         {
             var md = (V48.MethodDesc*)handle.Value;

@@ -11,6 +11,43 @@ namespace MonoMod.Core.Platforms.Runtimes
 {
     internal class Core21Runtime : CoreBaseRuntime
     {
+        // InstantiatedMethodDesc in src/vm/method.hpp: the offset of m_pWrappedMethodDesc (the size of MethodDesc), whether it is a
+        // RelativeFixupPointer, and the value of WrapperStubWithInstantiations
+        protected virtual (int Offset, bool Relative, int StubKind) WrappedMethodDescLayout => (8, true, 3);
+
+        protected override unsafe bool TryUnwrapInstantiatingStub(RuntimeMethodHandle handle, out RuntimeMethodHandle wrapped)
+        {
+            const ushort mdcClassification = 0x7;
+            const ushort mcInstantiated = 5;
+            const ushort KindMask = 0x7;
+
+            wrapped = default;
+            var (offset, relative, stubKind) = WrappedMethodDescLayout;
+
+            var md = (byte*)handle.Value
+                + (IsDebugClr ? 5 * IntPtr.Size : 0); // #ifdef _DEBUG fields, see FxCoreBaseRuntime.DisableInlining
+            var m_wFlags = *(ushort*)(md
+                + 2 // UINT16 m_wFlags3AndTokenRemainder
+                + 1 // BYTE m_chunkIndex
+                + 1 // BYTE m_bFlags2
+                + 2 // WORD m_wSlotNumber
+                );
+            var m_pWrappedMethodDesc = md + offset;
+            var m_wFlags2 = *(ushort*)(m_pWrappedMethodDesc
+                + IntPtr.Size // m_pWrappedMethodDesc
+                + IntPtr.Size // m_pPerInstInfo
+                );
+
+            if ((m_wFlags & mdcClassification) != mcInstantiated || (m_wFlags2 & KindMask) != stubKind)
+            {
+                return false;
+            }
+
+            wrapped = JitHookHelpers.CreateHandleForHandlePointer(relative
+                ? (IntPtr)(m_pWrappedMethodDesc + *(nint*)m_pWrappedMethodDesc)
+                : *(IntPtr*)m_pWrappedMethodDesc);
+            return true;
+        }
 
         public override RuntimeFeature Features => base.Features | RuntimeFeature.CompileMethodHook;
 

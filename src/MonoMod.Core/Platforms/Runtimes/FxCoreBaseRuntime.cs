@@ -415,7 +415,11 @@ namespace MonoMod.Core.Platforms.Runtimes
                 handle = GetMethodHandle(method);
             }
 
-            RuntimeHelpers.PrepareMethod(handle);
+            // .NET Framework needs the instantiation to prepare shared generic code, and crashes on __Canon instantiations in NGEN images
+            if (!IsSharedGenericCode(method, out _, out _))
+            {
+                RuntimeHelpers.PrepareMethod(handle);
+            }
             Helpers.Assert(TryInvokeBclCompileMethod(handle));
 
             if (method.IsVirtual && (method.DeclaringType?.IsValueType ?? false))

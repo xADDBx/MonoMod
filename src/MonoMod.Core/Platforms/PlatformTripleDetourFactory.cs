@@ -18,7 +18,7 @@ using Lock = object;
 
 namespace MonoMod.Core.Platforms
 {
-    internal sealed class PlatformTripleDetourFactory : IDetourFactory
+    internal sealed partial class PlatformTripleDetourFactory : IDetourFactory
     {
         private readonly PlatformTriple triple;
 
@@ -437,6 +437,8 @@ namespace MonoMod.Core.Platforms
             var target = triple.GetIdentifiable(request.Target);
 
             ManagedCoreDetour detour;
+            SharedGenericCode sharedCode = default;
+            var isShared = triple.Runtime is IGenericSharingRuntime sharingRuntime && sharingRuntime.TryGetSharedCode(source, out sharedCode);
             if (triple.SupportedFeatures.Has(RuntimeFeature.HasRuntimeAsync)
                 // runtime supports runtime async, we need to check for that so we can do the right thing in that case
                 && triple.Runtime.TryGetRuntimeAsyncInfo(source, out var srcAsyncInfo)
@@ -445,6 +447,11 @@ namespace MonoMod.Core.Platforms
                 // a thin thunk to the normal variant, we can stick to only detouring the ordinary variant.
                 && !srcAsyncInfo.AsyncVariantFlags.Has(RuntimeAsyncVariantFlags.IsThunk))
             {
+                if (isShared)
+                {
+                    throw new NotSupportedException("Detouring shared generic runtime-async methods is not supported");
+                }
+
                 var ordinaryDst = target;
                 var asyncDst = target;
 
@@ -466,6 +473,10 @@ namespace MonoMod.Core.Platforms
                     target,
                     ordinaryDst,
                     asyncDst, tgtAsyncInfo);
+            }
+            else if (isShared)
+            {
+                detour = CreateSharedGenericDetour(source, sharedCode, target);
             }
             else
             {
